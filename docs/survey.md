@@ -3,7 +3,8 @@
 이 저장소의 코드를 읽고 조사한 내용을 주제별로 정리한 문서입니다. GPU가 있는 환경에서 실제로 실행해 확인하지는 않았습니다.
 
 - [1. sm_61(Pascal) GPU 지원](#1-sm_61pascal-gpu-지원)
-- [2. memtest 플러그인의 빌드, 로드, 실행 과정](#2-memtest-플러그인의-빌드-로드-실행-과정)
+- [2. nvvs 개요](#2-nvvs-개요)
+- [3. memtest 플러그인의 빌드, 로드, 실행 과정](#3-memtest-플러그인의-빌드-로드-실행-과정)
 
 ## 1. sm_61(Pascal) GPU 지원
 
@@ -57,7 +58,55 @@ if ((arch == MAXWELL || arch == PASCAL || arch == VOLTA)
 - Pascal을 지원하는 마지막 드라이버 계열과 그 드라이버가 보고하는 CUDA 버전: NVIDIA 공식 자료로 확인해야 합니다.
 - 실제 sm_61 GPU에서의 동작: 위 내용은 모두 코드를 읽고 판단한 것입니다.
 
-## 2. memtest 플러그인의 빌드, 로드, 실행 과정
+## 2. nvvs 개요
+
+nvvs(**NVIDIA Validation Suite**)는 DCGM에 들어 있는 **GPU 진단 프로그램**입니다. GPU에 실제로 부하를 주어 하드웨어에 문제가 없는지 검사합니다. `dcgmi diag`를 실행하면 실제 검사는 이 `nvvs` 바이너리가 수행합니다.
+
+### 위치와 역할
+
+```
+dcgmi diag -r 3
+   └─▶ nv-hostengine (diag 모듈: modules/diag/DcgmDiagManager.cpp)
+          └─▶ nvvs 자식 프로세스 실행 (nvvs/src/NvvsMain.cpp)
+                 ├─ 소프트웨어 검사: 드라이버, 권한, 환경 변수 등 (GPU 부하 없음)
+                 └─ 플러그인 로드(dlopen): memtest, pcie, targeted_power ...
+                        └─ GPU에서 CUDA 커널 실행
+          ◀── 결과를 파이프(--channel-fd)로 반환 (FdChannelClient)
+```
+
+- **왜 별도 프로세스인가:** 진단은 GPU에 강한 부하를 주고 CUDA 컨텍스트를 만듭니다. 이 작업을 모니터링 데몬(`nv-hostengine`) 밖에서 실행하면, 진단이 멈추거나 실패해도 데몬은 영향을 받지 않습니다. diag 모듈은 nvvs를 `ChildProcess`로 실행하고, 필요하면 SIGTERM이나 SIGKILL로 중단합니다.
+- **nvvs가 하는 일:**
+  - 테스트 대상 GPU를 고릅니다. Maxwell 이상이거나 허용 목록에 있는 GPU만 대상입니다.
+  - 설정 파일(`nvvs/nvvs.conf`)과 GPU 모델(SKU)별 기본 파라미터(`nvvs/diag-skus.yaml.in`)를 읽습니다.
+  - 알맞은 CUDA 버전의 플러그인 디렉터리를 골라 플러그인을 로드하고 실행합니다.
+  - 결과를 모아 diag 모듈에 돌려줍니다.
+
+### 진단 단계별 테스트
+
+`dcgmi diag -r <단계>`의 단계 번호(1~4)는 diag 모듈이 nvvs에 넘기는 테스트 묶음 이름(short/medium/long/xlong)으로 바뀝니다(`modules/diag/DcgmDiagManager.cpp:374-387`, 값은 `dcgmlib/dcgm_structs.h:1965-1968`의 `DCGM_POLICY_VALID_SV_*`). 각 묶음에 들어가는 테스트는 `nvvs/src/NvidiaValidationSuite.cpp:1128-1190`에서 정합니다. 단계가 높을수록 아래 단계의 테스트를 모두 포함합니다.
+
+| 단계 | 묶음 이름 | 추가되는 테스트 |
+|---|---|---|
+| 1 | short(quick) | 소프트웨어 검사(denylist, NVML/CUDA 라이브러리, 권한, persistence mode, 페이지 리타이어먼트, Inforom, Fabric Manager 등) |
+| 2 | medium | memory, pcie |
+| 3 | long | diagnostic(gpuburn), nvbandwidth, nccl_tests, memory_bandwidth, targeted_stress, targeted_power (root이면 EUD도) |
+| 4 | xlong | memtest, pulse_test |
+
+### 소스 구성
+
+| 경로 | 내용 |
+|---|---|
+| `nvvs/src/` | nvvs 본체: 진입점 `NvvsMain.cpp`, 명령행 처리와 GPU 선택(`NvidiaValidationSuite.cpp`), 플러그인 로드(`PluginLib.cpp`) |
+| `nvvs/include/TestFramework.inl` | 플러그인 디렉터리(cuda11/12/13) 선택과 테스트 실행 흐름 |
+| `nvvs/plugin_src/` | 테스트 플러그인들. 각각 `libXxx.so`로 빌드되고 CUDA 버전별로 따로 만들어짐 |
+| `nvvs/nvvs.conf`, `nvvs/diag-skus.yaml.in` | 기본 설정과 GPU 모델별 파라미터 |
+
+### 참고
+
+- nvvs는 단독으로도 실행할 수 있습니다. 예를 들어 `-g`/`--listGpus`로 GPU 목록을 보고, `-c`로 설정 파일을, `-p`로 플러그인 경로를 지정할 수 있습니다. 보통은 `dcgmi diag`를 통해 간접적으로 실행합니다.
+- 플러그인 하나가 어떻게 빌드, 로드, 실행되는지는 [3장](#3-memtest-플러그인의-빌드-로드-실행-과정)의 memtest 예시에 정리했습니다.
+
+## 3. memtest 플러그인의 빌드, 로드, 실행 과정
 
 memtest는 CUDA 커널을 미리 PTX 텍스트로 만들어 플러그인 `.so` 안에 바이트 배열로 넣어 둡니다. 진단을 실행하면 `nvvs`가 이 `.so`를 `dlopen`으로 열고, 플러그인이 그 PTX를 CUDA Driver API로 GPU에 올려 커널을 실행합니다.
 
