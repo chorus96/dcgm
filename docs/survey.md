@@ -117,6 +117,108 @@ memtest는 CUDA 커널을 미리 PTX 텍스트로 만들어 플러그인 `.so` �
                   ─▶ cuModuleLoadData(PTX) ─(드라이버가 JIT 컴파일)─▶ cuLaunchKernel
 ```
 
+### 시퀀스 다이어그램
+
+**빌드 단계** (이미지: [memtest_sequence_build.png](memtest_sequence_build.png))
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as 개발자
+    participant NVCC as nvcc / bin2c
+    participant Repo as 저장소
+    participant CMake as CMake (build.sh)
+    participant Out as _out 설치 트리
+
+    Note over Dev,Repo: 미리 해 둔 작업 (CMake 빌드에 포함되지 않음, 명령은 PTX 헤더 기준 추정)
+    Dev->>NVCC: nvcc -ptx -arch=sm_30 tests.cu
+    NVCC-->>Repo: tests.ptx (.target sm_30)
+    Dev->>NVCC: bin2c tests.ptx
+    NVCC-->>Repo: inc/tests.h (memtest_ptx_string[])
+
+    Note over CMake,Out: ./build.sh 실행 시
+    CMake->>Repo: declare_nvvs_plugin(memtest .)로 소스 등록
+    loop CUDA 11, 12, 13
+        CMake->>CMake: define_plugin(Memtest, ver)
+        CMake->>CMake: Memtest.cpp 컴파일 (inc/tests.h 포함, PTX가 데이터로 들어감)
+        CMake->>CMake: CUDA ver 라이브러리, pluginCudaCommon, pluginCommon 링크
+        CMake->>Out: libMemtest.so 설치 (plugins/cudaVER/)
+    end
+```
+
+**로드와 실행 단계** (이미지: [memtest_sequence_run.png](memtest_sequence_run.png))
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 사용자
+    participant Dcgmi as dcgmi
+    participant Diag as nv-hostengine<br/>diag 모듈
+    participant Nvvs as nvvs<br/>(TestFramework)
+    participant Plugin as libMemtest.so<br/>(MemtestPlugin)
+    participant Memtest as Memtest
+    participant Worker as MemtestWorker<br/>(GPU별 스레드)
+    participant Driver as CUDA 드라이버
+    participant GPU as GPU
+
+    User->>Dcgmi: dcgmi diag -r memtest (또는 -r 4)
+    Dcgmi->>Diag: 진단 요청 (모듈 메시지)
+    Diag->>Nvvs: nvvs 자식 프로세스 실행 (--channel-fd)
+
+    Nvvs->>Nvvs: GetPluginCudaDirExtension()<br/>드라이버 CUDA 버전으로 cuda11/12/13 선택
+    Nvvs->>Plugin: dlopen(libMemtest.so)
+    Nvvs->>Plugin: dlsym으로 진입점 조회
+    Nvvs->>Plugin: GetPluginInterfaceVersion()
+    Nvvs->>Plugin: GetPluginInfo()
+    Plugin-->>Nvvs: 테스트 이름 memtest, 파라미터 목록
+    Nvvs->>Plugin: InitializePlugin()
+    Plugin->>Plugin: MemtestPlugin 생성, 로깅과 멈춤 감지 연결
+
+    Nvvs->>Plugin: RunTest("memtest", 파라미터, GPU 목록)
+    Plugin->>Plugin: Go(): 파라미터 적용, is_allowed 확인
+    Plugin->>Memtest: Memtest 생성 후 Run()
+
+    Memtest->>Driver: cuInit(0)
+    loop GPU마다
+        Memtest->>Driver: cuDeviceGetByPCIBusId()
+        Memtest->>Driver: cudaSetDevice(), cudaDeviceReset()
+        Memtest->>Driver: cuCtxCreate_v2()
+        Memtest->>Driver: cuModuleLoadData(memtest_ptx_string)
+        Driver->>Driver: PTX를 GPU 기계어(SASS)로 JIT 컴파일
+        Memtest->>Driver: cuModuleGetFunction() x 약 20개 커널
+    end
+
+    loop GPU마다 워커 스레드 1개 (모든 GPU가 동시에 실행)
+        Memtest->>Worker: Start(), 멈춤 감지 등록
+        Worker->>Driver: cuCtxSetCurrent()
+        Worker->>Driver: cudaMemGetInfo()
+        alt 빈 메모리 부족
+            Worker-->>Memtest: 건너뜀 (gpu_skipped)
+        else 충분함
+            Worker->>Driver: cudaMalloc() x num_chunks (실패 시 크기 줄여 재시도)
+            loop test_duration(기본 600초)이 지날 때까지
+                loop 켜진 테스트 (기본 Test7, Test10)
+                    Worker->>Driver: cuLaunchKernel(Write 커널)
+                    Driver->>GPU: 패턴 쓰기
+                    Worker->>Driver: cuLaunchKernel(Read 커널)
+                    Driver->>GPU: 읽고 비교
+                    GPU-->>Worker: 오류 개수 (error_checking)
+                end
+            end
+            Worker-->>Memtest: gpu_errors 기록
+        end
+    end
+
+    Memtest->>Memtest: CheckPassFail()
+    Memtest->>Driver: cuModuleUnload(), cuCtxDestroy(), cuDevicePrimaryCtxReset()
+    Memtest-->>Plugin: 결과
+    Nvvs->>Plugin: RetrieveResults(), RetrieveCustomStats()
+    Plugin-->>Nvvs: GPU별 통과/실패, 통계
+    Nvvs-->>Diag: 결과 전송 (FdChannelClient)
+    Diag-->>Dcgmi: 진단 응답
+    Dcgmi-->>User: 결과 출력
+```
+
 ### 빌드 단계
 
 **① 커널 소스 → PTX → C 헤더 (저장소에 이미 들어 있음)**
