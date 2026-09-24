@@ -5,6 +5,7 @@
 - [1. sm_61(Pascal) GPU 지원](#1-sm_61pascal-gpu-지원)
 - [2. nvvs 개요](#2-nvvs-개요)
 - [3. memtest 플러그인의 빌드, 로드, 실행 과정](#3-memtest-플러그인의-빌드-로드-실행-과정)
+- [4. DCGM 빌드 과정](#4-dcgm-빌드-과정)
 
 ## 1. sm_61(Pascal) GPU 지원
 
@@ -317,3 +318,126 @@ memtest의 `inc/tests.h`도 같은 방식으로 만들어진 것으로 보입니
 
 - 커널은 CUDA Runtime의 `<<<>>>` 문법이 아니라 **Driver API(`cuModuleLoadData` + `cuLaunchKernel`)** 로 실행됩니다. 그래서 `.so`에는 fatbin이 없고 PTX 텍스트만 들어 있습니다. 커널 기계어는 실행할 때마다 설치된 드라이버가 만듭니다.
 - 테스트할 때 `__DCGM_DIAG_MEMTEST_FAIL_GPU` 환경 변수를 설정하면 가짜 실패를 만들 수 있습니다(`Memtest.cpp:719`). 가짜 GPU(NVML 인젝션) 환경에서는 커널을 실행하지 않고 통과로 처리합니다(`memtest_wrapper.cpp`의 `UsingFakeGpus`).
+
+## 4. DCGM 빌드 과정
+
+DCGM 빌드는 두 단계로 나뉩니다. 먼저 **빌드 이미지**(컴파일러, CUDA, 서드파티 라이브러리가 들어 있는 Docker 이미지)를 한 번 만들고, 그다음 **`./build.sh`**가 그 이미지 안에서 CMake로 DCGM을 빌드합니다.
+
+### 빌드 이미지 만들기 (최초 1회)
+
+이미지: [dcgm_build_sequence_image.png](dcgm_build_sequence_image.png)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as 개발자
+    participant Script as dcgmbuild/build.sh
+    participant Bake as docker buildx bake<br/>(docker-bake.hcl)
+    participant Host as common-host-software<br/>이미지
+    participant TC as toolchain-ARCH<br/>이미지
+    participant Img as dcgmbuild-ARCH<br/>이미지
+
+    Note over Dev,Img: 최초 1회 (몇 시간 소요). ARCH = x86_64, aarch64
+    Dev->>Script: cd dcgmbuild && ./build.sh
+    Script->>Script: dependency_flags.sh bake로 인자 구성, GIT_COMMIT 기록
+    Script->>Bake: docker buildx bake
+    Bake->>Host: ubuntu:24.04 기반 빌드
+    Host->>Host: git, git-lfs, cmake, clang, ccache, sccache, lcov 설치
+    loop ARCH마다
+        Bake->>TC: common-host-software 기반 빌드
+        TC->>TC: crosstool-ng로 GCC 크로스 컴파일러 생성 (/opt/cross)
+        TC->>TC: CMake 툴체인 파일 생성 (toolchain-gcc.cmake)
+        TC->>TC: CUDA 11, 12, 13 설치, Rust 설치
+        TC->>TC: ENV ARCHITECTURE, TARGET, DCGM_BUILD_INSIDE_DOCKER=1
+        Bake->>Img: toolchain-ARCH 기반 빌드
+        Img->>Img: 서드파티 라이브러리 크로스 빌드<br/>(zlib, jsoncpp, libevent, tclap, yaml, Catch2, plog, fmt, boost, libnuma)
+        Img->>Img: 결과를 /opt/cross/TARGET/sysroot에 복사
+        Bake-->>Dev: 태그 dcgm/dcgmbuild-ARCH:latest
+    end
+```
+
+- `dcgmbuild/build.sh`는 `docker buildx bake`로 `dcgmbuild/docker-bake.hcl`의 세 타깃을 차례로 빌드합니다. 아키텍처(x86_64, aarch64)마다 따로 만듭니다.
+
+  | 이미지 | 기반 | 내용 | 근거 |
+  |---|---|---|---|
+  | `common-host-software` | `ubuntu:24.04` | git, git-lfs, cmake, clang, ripgrep, lcov, ccache, sccache | `dcgmbuild/container-images/common-host-software/scripts/` |
+  | `toolchain-ARCH` | common-host-software | crosstool-ng로 만든 GCC 크로스 컴파일러(`/opt/cross`), CMake 툴체인 파일, CUDA, Rust | `dcgmbuild/container-images/toolchain/Dockerfile` |
+  | `dcgmbuild-ARCH` | toolchain-ARCH | 크로스 빌드한 서드파티 라이브러리를 sysroot(`/opt/cross/TARGET/sysroot`)에 설치 | `dcgmbuild/container-images/dcgmbuild/scripts/` |
+
+- toolchain 이미지는 `ARCHITECTURE`, `TARGET`, `CMAKE_TOOLCHAIN_FILE`, `DCGM_BUILD_INSIDE_DOCKER=1` 환경 변수를 설정합니다. `build.sh`는 이 값으로 자신이 컨테이너 안에서 실행 중인지 판단합니다.
+- 결과 태그는 `dcgm/dcgmbuild-x86_64:latest`, `dcgm/dcgmbuild-aarch64:latest`입니다. `intodocker.sh`는 `DCGM_DOCKER_IMAGE`(기본 `dcgm/dcgmbuild`) 뒤에 `-아키텍처`를 붙여 이 이미지를 찾습니다.
+
+### DCGM 빌드하기 (`./build.sh`)
+
+이미지: [dcgm_build_sequence_build.png](dcgm_build_sequence_build.png)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as 개발자
+    participant Host as build.sh<br/>(호스트)
+    participant Into as intodocker.sh
+    participant Ctr as build.sh<br/>(컨테이너 안)
+    participant CMake as CMake / Ninja
+    participant CTest as ctest
+    participant CPack as cpack
+    participant Out as _out/
+
+    Dev->>Host: ./build.sh -r --deb
+    Host->>Host: 옵션 파싱 (빌드 타입, 아키텍처, 패키지, 새니타이저)
+    Host->>Host: git lfs pull (DCGM_SKIP_LFS_INSTALL=1이면 생략)
+    loop 아키텍처마다 (기본 amd64)
+        Host->>Into: intodocker.sh --arch ARCH -- ./build.sh 옵션
+        Into->>Into: 이미지 이름 결정 (dcgm/dcgmbuild-x86_64 등)
+        Into->>Ctr: docker run (소스를 /workspaces/dcgm에 마운트, ccache 볼륨)
+
+    loop 빌드 타입마다 (기본 RelWithDebInfo)
+        opt --clean
+            Ctr->>Out: _out/build/SUFFIX, _out/SUFFIX 삭제
+        end
+        Ctr->>CMake: cmake -S . -B _out/build/SUFFIX (구성 단계)
+        CMake->>CMake: find_package (Boost, Catch2, Cuda, fmt, jsoncpp, libevent, plog, TCLAP, yaml)
+        CMake->>CMake: add_subdirectory (common, dcgmlib, modules, hostengine, dcgmi, nvvs, testing ...)
+        Ctr->>Ctr: compile_commands.json을 소스 루트로 복사
+        Ctr->>CMake: cmake --build (컴파일, 링크)
+        CMake->>CMake: libdcgm, nv-hostengine, dcgmi, 모듈 .so,<br/>nvvs, CUDA 11/12/13별 플러그인 빌드
+
+        opt 테스트 (-n이 없을 때)
+            Ctr->>Ctr: pylint (DCGM_SKIP_PYTHON_LINTING=1이면 생략)
+            Ctr->>CTest: ctest --output-on-failure --parallel
+            CTest-->>Ctr: Catch2 단위 테스트 결과
+            opt --coverage
+                Ctr->>CMake: gcovr 리포트 타깃 빌드
+            end
+        end
+
+        opt 설치 (--no-install이 없을 때)
+            Ctr->>CMake: cmake --install
+            CMake->>Out: _out/SUFFIX/ (bin, lib, libexec 등)
+        end
+
+        loop 요청된 패키지 형식 (DEB, RPM, TGZ)
+            Ctr->>CMake: 패키지용 LIBDIR로 다시 구성하고 빌드
+            Ctr->>CPack: cpack -G 형식
+        end
+        opt VMware 빌드가 아닐 때
+            Ctr->>CMake: dcgm_config 구성, 빌드
+            Ctr->>CPack: cpack -G RPM/DEB (요청된 경우)
+        end
+        Ctr->>Out: .deb, .rpm, .tar.gz를 _out/SUFFIX/로 이동
+    end
+    end
+    Out-->>Dev: 빌드 결과물과 패키지
+```
+
+- **호스트에서:** `build.sh`는 옵션을 해석하고 `git lfs pull`을 한 뒤, 아키텍처마다 `intodocker.sh`로 **자기 자신을 컨테이너 안에서 다시 실행**합니다. `intodocker.sh`는 소스 디렉터리를 `/workspaces/<프로젝트명>`에 마운트하고, ccache를 쓰면 `_out/compiler-cache`를 캐시 디렉터리로 연결합니다.
+- **컨테이너 안에서:** 빌드 타입(Debug, RelWithDebInfo)마다 다음을 실행합니다. `SUFFIX`는 `Linux-amd64-relwithdebinfo` 같은 형태입니다.
+  1. `cmake -S . -B _out/build/SUFFIX`로 구성합니다. Ninja가 있으면 Ninja를 씁니다. `BUILD_TESTING`은 `-n` 옵션에 따라 정해집니다.
+  2. `compile_commands.json`을 소스 루트로 복사합니다(IDE와 clang 도구용).
+  3. `cmake --build`로 전체를 빌드합니다. 병렬 수는 `NPROC`(기본 `nproc`)입니다.
+  4. 테스트를 켠 경우 pylint와 `ctest`를 실행하고, `--coverage`이면 gcovr 리포트를 만듭니다.
+  5. `cmake --install`로 `_out/SUFFIX/`에 설치합니다.
+  6. 요청한 패키지 형식(DEB, RPM, TGZ)마다 `CMAKE_INSTALL_LIBDIR`를 바꿔 다시 구성하고 빌드한 뒤 `cpack`으로 패키지를 만듭니다. VMware 빌드가 아니면 `dcgm_config` 패키지도 만듭니다.
+  7. 만든 `.deb`, `.rpm`, `.tar.gz`를 `_out/SUFFIX/`로 옮깁니다.
+- 근거: `build.sh:116-343`(옵션 파싱 116-198, 컨테이너 진입 206-221, 빌드 루프 261-343), `intodocker.sh`, `dcgmbuild/build.sh`, `dcgmbuild/docker-bake.hcl`.
+- toolchain 이미지에는 Rust와 Corrosion이 설치되고 `cmake/Rust.cmake`도 있지만, 현재 어떤 `CMakeLists.txt`도 이를 불러 쓰지 않아 다이어그램에서는 뺐습니다.
