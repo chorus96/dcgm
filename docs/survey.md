@@ -439,5 +439,5 @@ sequenceDiagram
   5. `cmake --install`로 `_out/SUFFIX/`에 설치합니다.
   6. 요청한 패키지 형식(DEB, RPM, TGZ)마다 `CMAKE_INSTALL_LIBDIR`를 바꿔 다시 구성하고 빌드한 뒤 `cpack`으로 패키지를 만듭니다. VMware 빌드가 아니면 `dcgm_config` 패키지도 만듭니다.
   7. 만든 `.deb`, `.rpm`, `.tar.gz`를 `_out/SUFFIX/`로 옮깁니다.
-- 근거: `build.sh:116-343`(옵션 파싱 116-198, 컨테이너 진입 206-221, 빌드 루프 261-343), `intodocker.sh`, `dcgmbuild/build.sh`, `dcgmbuild/docker-bake.hcl`.
+- 근거: `build.sh:116-343`(옵션 파싱 116-198, 컨테이너 진입 207-222, 빌드 루프 261-343), `intodocker.sh`, `dcgmbuild/build.sh`, `dcgmbuild/docker-bake.hcl`.
 - toolchain 이미지에는 Rust와 Corrosion이 설치되고 `cmake/Rust.cmake`도 있지만, 현재 어떤 `CMakeLists.txt`도 이를 불러 쓰지 않아 다이어그램에서는 뺐습니다.
