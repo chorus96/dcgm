@@ -7,6 +7,7 @@
 - [3. memtest 플러그인의 빌드, 로드, 실행 과정](#3-memtest-플러그인의-빌드-로드-실행-과정)
 - [4. DCGM 빌드 과정](#4-dcgm-빌드-과정)
 - [5. Ubuntu 22.04에서 apt로 설치하고 memtest 실행하기](#5-ubuntu-2204에서-apt로-설치하고-memtest-실행하기)
+- [6. memtest 실패 시 오류 주소 확인](#6-memtest-실패-시-오류-주소-확인)
 
 ## 1. sm_61(Pascal) GPU 지원
 
@@ -550,6 +551,65 @@ sudo dcgmi diag -r memtest -p "memtest.test_duration=300;memtest.test0=true;memt
   sudo dcgmi diag -r memtest -p "memtest.test_duration=60" --debugLogFile /tmp/diag.log -d ERROR
   ```
 - **호스트 엔진에 연결되지 않을 때:** `sudo systemctl restart nvidia-dcgm`을 실행하고, `journalctl -u nvidia-dcgm`으로 로그를 확인하세요.
+
+## 6. memtest 실패 시 오류 주소 확인
+
+**결론:** 알 수 있지만 제한이 있습니다. memtest는 실패한 주소를 기록하지만, 그 주소는 `dcgmi diag` 결과 화면에는 나오지 않고 **nvvs 디버그 로그에만** 남습니다. 또 그 값은 **GPU 가상 주소**라서 물리 DRAM 위치와 바로 대응하지 않습니다.
+
+### 주소가 기록되는 과정
+
+1. **GPU 커널에서 기록:** 각 Read/Check 커널은 기대값과 다른 값을 발견하면 `RECORD_ERR` 매크로로 다음을 기록합니다(`nvvs/plugin_src/memtest/tests.cu:48-55`).
+   ```c
+   idx = atomicAdd(err, 1) % MAX_ERR_RECORD_COUNT;   // MAX_ERR_RECORD_COUNT = 10 (misc.h:46)
+   err_addr[idx]        = (unsigned long)p;          // 오류 주소
+   err_expect[idx]      = expect;                    // 기대값
+   err_current[idx]     = current;                   // 처음 읽은 값
+   err_second_read[idx] = *p;                        // 다시 읽은 값
+   ```
+2. **호스트에서 로그로 출력:** 테스트마다 `error_checking()`(`Memtest.cpp:928-990`)이 이 배열을 GPU에서 복사해 와 **ERROR 레벨 로그**로 남깁니다.
+   ```
+   N errors found in block <블록 번호>
+   the last K error addresses are: <주소> <주소> ...
+   :0th error, expected value=..., current value=...
+   (second_read=..., expect=...
+   ```
+3. **최종 결과에는 개수만 남음:** `CheckPassFailSkipSingleGpu()`(`Memtest.cpp:633-655`)는 오류 **개수**만으로 판정합니다. 사용자에게 보이는 결과에는 `Device N recorded M errors during memtest`와 `DCGM_FR_MEMORY_MISMATCH` 오류만 표시되고, **주소는 들어가지 않습니다.**
+
+### 주소를 보는 방법
+
+```bash
+sudo dcgmi diag -r memtest -p "memtest.test_duration=60" \
+     --debugLogFile /tmp/memtest.log -d ERROR
+grep -A20 "errors found in block" /tmp/memtest.log
+```
+
+- `-d`(`--debugLevel`)를 ERROR 이상으로 지정해야 합니다. 주소 로그가 `DCGM_LOG_ERROR`로 출력되기 때문입니다.
+- 로그 파일은 절대 경로로 지정하는 것이 안전합니다. 경로를 생략하면 기본 파일 이름은 `nvvs.log`인데(`common/DcgmLogging.h:56`), 이 파일이 어느 디렉터리에 생기는지는 코드로 확인하지 못했습니다.
+- 플러그인 로그는 호스트 엔진 로깅 콜백으로도 전달되도록 연결되어 있습니다(`InitializePlugin`). 그래서 `nv-hostengine` 로그에도 남을 수 있지만, 이것도 확인하지 못했습니다.
+
+### 주의할 점
+
+| 제한 | 이유 |
+|---|---|
+| **가상 주소임** | `err_addr`는 `cudaMalloc`으로 받은 포인터 값, 즉 GPU 가상 주소입니다. 물리 DRAM 주소, 뱅크, 행(row) 위치가 아닙니다. 실행할 때마다 값이 달라질 수 있습니다. |
+| **최대 10개만 남음** | 기록 버퍼가 10칸이고 `% 10`으로 덮어씁니다. 오류가 많으면 앞의 기록은 사라지고, 로그 문구대로 "마지막 10개"만 남습니다. |
+| **"블록 번호"의 의미가 테스트마다 다름** | 대부분 1MB 블록 인덱스(청크 번호 × 청크당 블록 수 + i)입니다. 하지만 test0 전역 주소 검사처럼 청크 번호를 넘기는 곳도 있습니다(`Memtest.cpp:1065`). |
+| **주소를 볼 수 있는 곳이 로그뿐** | JSON 출력(`-j`)이나 `dcgmi` 결과 화면에는 주소가 없습니다. |
+
+참고로 `error_checking()`은 오류 배열을 초기화할 때 `err_second_read`는 지우지 않습니다(`Memtest.cpp:978-985`). 다음 기록 때 덮어써지므로 결과에는 사실상 영향이 없습니다.
+
+### 물리 위치가 필요하다면
+
+하드웨어 수준의 메모리 오류 위치는 memtest가 아니라 **드라이버의 ECC와 행 재매핑(row remapping) 기록**으로 확인하는 것이 정확합니다.
+
+```bash
+nvidia-smi -q -d ECC,ROW_REMAPPER,PAGE_RETIREMENT   # 오류 개수, 재매핑된 행, 퇴역 페이지
+dcgmi health -c                                      # DCGM 헬스 검사 (메모리 항목 포함)
+```
+
+DCGM도 이 정보를 필드로 제공합니다. 예를 들어 행 재매핑 관련 `DCGM_FI_DEV_*ROW_REMAP*` 필드와 ECC 오류 카운터가 있습니다. 진단 1단계(short)의 소프트웨어 검사 "Page Retirement/Row Remap"([2장](#진단-단계별-테스트))도 이 정보를 봅니다.
+
+이 장은 코드를 읽고 정리한 내용이며, 실제 GPU에서 실패를 재현해 보지는 않았습니다.
 
 ## 참고
 - GPU 1,000장 모니터링 하기: NVIDIA DCGM 활용 전략, https://tech.ktcloud.com/entry/GPU-1000장-모니터링-하기-NVIDIA-DCGM-활용-전략
