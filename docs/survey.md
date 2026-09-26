@@ -6,6 +6,7 @@
 - [2. nvvs 개요](#2-nvvs-개요)
 - [3. memtest 플러그인의 빌드, 로드, 실행 과정](#3-memtest-플러그인의-빌드-로드-실행-과정)
 - [4. DCGM 빌드 과정](#4-dcgm-빌드-과정)
+- [5. Ubuntu 22.04에서 apt로 설치하고 memtest 실행하기](#5-ubuntu-2204에서-apt로-설치하고-memtest-실행하기)
 
 ## 1. sm_61(Pascal) GPU 지원
 
@@ -441,6 +442,114 @@ sequenceDiagram
   7. 만든 `.deb`, `.rpm`, `.tar.gz`를 `_out/SUFFIX/`로 옮깁니다.
 - 근거: `build.sh:116-343`(옵션 파싱 116-198, 컨테이너 진입 207-222, 빌드 루프 261-343), `intodocker.sh`, `dcgmbuild/build.sh`, `dcgmbuild/docker-bake.hcl`.
 - toolchain 이미지에는 Rust와 Corrosion이 설치되고 `cmake/Rust.cmake`도 있지만, 현재 어떤 `CMakeLists.txt`도 이를 불러 쓰지 않아 다이어그램에서는 뺐습니다.
+
+## 5. Ubuntu 22.04에서 apt로 설치하고 memtest 실행하기
+
+패키지 이름, 서비스 이름, `dcgmi diag` 옵션, memtest 파라미터와 기본값은 저장소 코드에서 확인했습니다. **apt 저장소 주소와 등록 절차는 NVIDIA 공식 설치 방법을 기억에 의존해 옮긴 것**이고 실행해 보지는 않았습니다. 실제로 설치하기 전에 [NVIDIA DCGM 문서](https://docs.nvidia.com/datacenter/dcgm/latest/)의 설치 절차와 대조하세요.
+
+### 사전 조건
+
+- NVIDIA 데이터센터 드라이버가 설치되어 있고 `nvidia-smi`가 동작해야 합니다.
+- 드라이버가 지원하는 CUDA 메이저 버전을 확인합니다.
+  ```bash
+  nvidia-smi | grep "CUDA Version"
+  ```
+
+### apt로 설치
+
+```bash
+# ① NVIDIA CUDA 저장소 등록 (Ubuntu 22.04 = ubuntu2204)
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+
+# ② 예전 DCGM 3.x가 있으면 제거 (4.x 패키지와 충돌)
+sudo apt-get purge -y datacenter-gpu-manager
+
+# ③ 드라이버의 CUDA 메이저 버전에 맞춰 설치
+CUDA_MAJOR=$(nvidia-smi | sed -E -n 's/.*CUDA Version: ([0-9]+)[.].*/\1/p')
+sudo apt-get install -y --install-recommends datacenter-gpu-manager-4-cuda${CUDA_MAJOR}
+
+# ④ 호스트 엔진 서비스 시작
+sudo systemctl --now enable nvidia-dcgm
+```
+
+**패키지 구성** (`cmake/packaging.cmake:131-140` 기준, 기본 이름은 `datacenter-gpu-manager-4`)
+
+| 패키지 | 내용 |
+|---|---|
+| `datacenter-gpu-manager-4-core` | `nv-hostengine`, `dcgmi`, 라이브러리, 모듈 |
+| `datacenter-gpu-manager-4-cuda11` / `-cuda12` / `-cuda13` | 해당 CUDA 버전용 nvvs 플러그인(**memtest 포함**) |
+| `datacenter-gpu-manager-4-cuda-all` | 위 세 CUDA 패키지를 모두 설치 |
+| `datacenter-gpu-manager-4-dev` | 헤더 등 개발용 파일 |
+
+- memtest는 `cudaXX` 패키지 안에 있습니다(`/usr/libexec/datacenter-gpu-manager-4/plugins/cudaXX/`). `core` 패키지만 설치하면 memtest를 실행할 수 없습니다.
+- **Pascal(sm_61) 같은 구형 GPU에서 드라이버가 CUDA 13.0을 보고하는 경우**, nvvs는 cuda12 플러그인을 사용합니다([1장](#주의-cuda-13과-pascal) 참고). 이때는 `-cuda13`이 아니라 `-cuda12`를 설치하거나, 간단히 `-cuda-all`을 설치하세요.
+- 서비스 이름 `nvidia-dcgm`과 실행 명령 `nv-hostengine -n --service-account nvidia-dcgm`은 `config-files/systemd/nvidia-dcgm.service.in`에서 확인했습니다.
+
+**설치 확인**
+
+```bash
+systemctl status nvidia-dcgm     # active (running) 인지 확인
+dcgmi discovery -l               # GPU 목록이 보이면 정상
+```
+
+### memtest 실행
+
+memtest는 GPU 메모리에 패턴을 쓰고 다시 읽어 오류를 찾습니다. **기본으로 600초(10분) 동안 실행**되고, 실행 중에는 GPU 메모리를 대부분 차지합니다. 내부 동작은 [3장](#3-memtest-플러그인의-빌드-로드-실행-과정)을 참고하세요.
+
+```bash
+# 기본 실행: 모든 GPU, 600초
+sudo dcgmi diag -r memtest
+
+# 짧게 시험: 60초
+sudo dcgmi diag -r memtest -p "memtest.test_duration=60"
+
+# 특정 GPU만 (GPU 0과 1)
+sudo dcgmi diag -r memtest -i 0,1 -p "memtest.test_duration=60"
+
+# 결과를 JSON으로 출력
+sudo dcgmi diag -r memtest -p "memtest.test_duration=60" -j
+
+# 가장 긴 진단 단계(4, xlong)에 포함해 실행 (다른 테스트도 함께 실행되어 오래 걸림)
+sudo dcgmi diag -r 4
+```
+
+**주요 옵션** (`dcgmi/CommandLineParser.cpp`)
+
+| 옵션 | 의미 |
+|---|---|
+| `-r memtest` | 실행할 테스트 이름 또는 단계 번호(1~4) |
+| `-p "테스트.파라미터=값;..."` | 테스트 파라미터. 여러 개는 `;`로 구분 |
+| `-i 0,1` | 진단할 엔티티(GPU) 목록 (`--entity-id`) |
+| `-j` | JSON 출력 |
+| `--iterations N` | N번 연속 실행 |
+
+**memtest 파라미터와 기본값** (`nvvs/plugin_src/memtest/memtest_wrapper.cpp:33-50`, `nvvs/plugin_src/include/PluginCommon.h:25`)
+
+| 파라미터 | 기본값 | 의미 |
+|---|---|---|
+| `test_duration` | 600 | 실행 시간(초) |
+| `test0`~`test10` | test7, test10만 `True` | 개별 테스트 켜기/끄기. 예: `memtest.test2=true` |
+| `num_chunks` | 1 | 메모리를 몇 조각으로 나눠 할당할지 |
+| `use_mapped_mem` | False | GPU 메모리 대신 호스트 매핑 메모리 사용 |
+| `minimum_allocation_percentage` | 75 | 빈 메모리가 전체의 이 비율(%)보다 적으면 테스트를 **건너뜀** |
+
+예를 들어 모든 테스트를 켜고 5분 동안 실행하려면 이렇게 합니다.
+
+```bash
+sudo dcgmi diag -r memtest -p "memtest.test_duration=300;memtest.test0=true;memtest.test1=true;memtest.test2=true;memtest.test3=true;memtest.test4=true;memtest.test5=true;memtest.test6=true;memtest.test8=true;memtest.test9=true"
+```
+
+### 결과 보기와 문제 해결
+
+- 결과는 GPU마다 `Pass` / `Fail` / `Skip`으로 표시됩니다.
+- **Skip이 나올 때:** 빈 GPU 메모리가 75% 미만인 경우가 가장 흔합니다. `nvidia-smi`로 GPU를 쓰는 프로세스를 확인하고 종료한 뒤 다시 실행하세요.
+- **자세한 로그:** README에 나온 대로 디버그 로그를 남길 수 있습니다.
+  ```bash
+  sudo dcgmi diag -r memtest -p "memtest.test_duration=60" --debugLogFile /tmp/diag.log -d ERROR
+  ```
+- **호스트 엔진에 연결되지 않을 때:** `sudo systemctl restart nvidia-dcgm`을 실행하고, `journalctl -u nvidia-dcgm`으로 로그를 확인하세요.
 
 ## 참고
 - GPU 1,000장 모니터링 하기: NVIDIA DCGM 활용 전략, https://tech.ktcloud.com/entry/GPU-1000장-모니터링-하기-NVIDIA-DCGM-활용-전략
