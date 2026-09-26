@@ -667,3 +667,4 @@ dcgmi health --clear   # 감시 끄기
 
 ## 참고
 - GPU 1,000장 모니터링 하기: NVIDIA DCGM 활용 전략, https://tech.ktcloud.com/entry/GPU-1000장-모니터링-하기-NVIDIA-DCGM-활용-전략
+- [GPU / dcgmi] dcgmi 명령어로 GPU 진단 수행, https://youngswooyoung.tistory.com/m/351
