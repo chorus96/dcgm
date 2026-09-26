@@ -8,6 +8,7 @@
 - [4. DCGM 빌드 과정](#4-dcgm-빌드-과정)
 - [5. Ubuntu 22.04에서 apt로 설치하고 memtest 실행하기](#5-ubuntu-2204에서-apt로-설치하고-memtest-실행하기)
 - [6. memtest 실패 시 오류 주소 확인](#6-memtest-실패-시-오류-주소-확인)
+- [7. dcgmi health -c가 하는 검사](#7-dcgmi-health--c가-하는-검사)
 
 ## 1. sm_61(Pascal) GPU 지원
 
@@ -604,12 +605,65 @@ grep -A20 "errors found in block" /tmp/memtest.log
 
 ```bash
 nvidia-smi -q -d ECC,ROW_REMAPPER,PAGE_RETIREMENT   # 오류 개수, 재매핑된 행, 퇴역 페이지
-dcgmi health -c                                      # DCGM 헬스 검사 (메모리 항목 포함)
+dcgmi health -s m && sleep 60 && dcgmi health -c    # DCGM 헬스 검사 (메모리 감시를 켠 뒤 판정, 7장 참고)
 ```
 
 DCGM도 이 정보를 필드로 제공합니다. 예를 들어 행 재매핑 관련 `DCGM_FI_DEV_*ROW_REMAP*` 필드와 ECC 오류 카운터가 있습니다. 진단 1단계(short)의 소프트웨어 검사 "Page Retirement/Row Remap"([2장](#진단-단계별-테스트))도 이 정보를 봅니다.
 
 이 장은 코드를 읽고 정리한 내용이며, 실제 GPU에서 실패를 재현해 보지는 않았습니다.
+
+## 7. `dcgmi health -c`가 하는 검사
+
+**핵심:** `dcgmi health -c`는 GPU에 부하를 주는 **테스트를 실행하지 않습니다.** 먼저 `dcgmi health -s`로 켜 둔 **감시 항목(watch)** 에 대해, DCGM이 백그라운드에서 모아 둔 필드 값과 XID 이벤트를 **기준값과 비교해 판정만** 합니다(수동적 검사). 부하를 주는 능동적 검사는 `dcgmi diag`(nvvs, [2장](#2-nvvs-개요))가 담당합니다.
+
+### 사용 순서
+
+```bash
+dcgmi health -s a      # ① 감시 항목 켜기 (a = 전체, 기본값은 pm = PCIe+메모리)
+# (*) 표시 항목은 첫 조회 전에 60초 이상 데이터가 쌓여야 함
+dcgmi health -c        # ② 쌓인 데이터로 판정
+dcgmi health -f        # 현재 켜진 감시 항목 확인
+dcgmi health --clear   # 감시 끄기
+```
+
+- 감시 항목을 켜지 않고 `-c`를 실행하면 `Health watches not enabled` 오류가 납니다(`dcgmi/Health.cpp:375-386`).
+- `-s` 옵션 문자: `a` 전체, `d` 드라이버, `i` InfoROM, `m` 메모리(*), `n` NVLink(*), `p` PCIe(*), `t` 온도·전력(*), `x` ConnectX(*) (`dcgmi/CommandLineParser.cpp:1236-1249`)
+- `-u`(기본 30초)는 드라이버에서 값을 가져오는 주기이고, `-m`(기본 600초)은 샘플을 보관하는 시간입니다.
+- 결과는 항목별로 `Healthy` / `Warning` / `Failure`로 표시됩니다.
+
+### 검사 항목 (GPU 기준)
+
+판정 로직은 `modules/health/DcgmHealthWatch.cpp`의 `MonitorWatchesForGpu()`(538행)에서 항목별 `Monitor*()` 함수로 나뉩니다.
+
+| 감시 항목 | 보는 데이터 | 판정 기준 |
+|---|---|---|
+| **항상 검사** (감시 항목과 무관) | 치명적 XID | XID 48(DBE), 74(NVLink 치명), 79(버스 이탈), 95, 119·120(GSP), 140(ECC 복구 불가) → **Failure**. XID 94(격리된 오류) → **Warning** |
+| **PCIe** (`p`) | `DCGM_FI_DEV_PCIE_REPLAY_TOTAL` | 1분 동안의 replay 증가량이 PCIe 세대·레인 수로 정한 기대치를 넘으면 **Warning**. XID 38, 39, 42도 Warning |
+| **메모리** (`m`) | ECC, 페이지 퇴역, 행 재매핑 필드 | 아래 표 참고. XID 31, 32, 43, 63은 Warning, XID 64는 Failure |
+| **InfoROM** (`i`) | `DCGM_FI_DEV_INFOROM_VALID` | InfoROM이 손상되었으면 **Warning** |
+| **온도** (`t`) | `DCGM_FI_DEV_THERMAL_VIOLATION` | 기간 중 온도 때문에 클럭이 제한된 시간이 있으면 **Warning**. XID 60, 61, 62도 Warning |
+| **전력** (`t`) | `DCGM_FI_DEV_POWER_VIOLATION`, `DCGM_FI_DEV_BOARD_POWER_WATTS` | 전력 때문에 클럭이 제한되었거나 전력을 읽을 수 없으면 **Warning**. XID 54, 56, 57, 58, 78도 Warning |
+| **NVLink** (`n`) | 링크 상태, CRC·replay·recovery 오류 카운터, Fabric Manager 상태 | 링크 다운 → **Failure**. 오류 카운터 증가 → Warning 또는 Failure. XID 67, 73, 121은 Warning |
+| **드라이버** (`d`) | `DCGM_FI_DEV_GPU_RECOVERY_ACTION` | 드라이버가 리셋, 재부팅, 작업 정리(drain)를 권고하면 **Warning/Failure** |
+
+**메모리 세부 검사** (`MonitorMem()`, 2193행에서 차례로 호출)
+
+| 검사 | 필드 | 판정 |
+|---|---|---|
+| 휘발성 DBE | `DCGM_FI_DEV_ECC_DBE_VOL_TOTAL` | 기간 중 Double Bit ECC 오류 발생 → **Failure** |
+| 퇴역 대기 페이지 | `DCGM_FI_DEV_PAGE_RETIRED_PENDING` | 퇴역 대기 중인 페이지가 있으면 → **Warning** (재부팅이나 리셋 필요) |
+| 퇴역 페이지 수 | `DCGM_FI_DEV_PAGE_RETIRED_SBE/DBE_TOTAL` | SBE와 DBE 합계가 63 이상이면 → **Failure**. DBE가 15개를 넘은 뒤 1주일 동안 계속 늘어나면 → **Failure** (`common/DcgmGPUHardwareLimits.h:21-22`) |
+| 행 재매핑 실패 | `DCGM_FI_DEV_ROW_REMAP_FAILED` | 실패가 있으면 → **Failure** |
+| 수정 불가 행 재매핑 | `DCGM_FI_DEV_ROW_REMAP_UNCORRECTABLE_TOTAL` | 512 이상이면 → **Warning** (`DcgmGPUHardwareLimits.h:39`) |
+| 복구 불가 메모리 | `DCGM_FI_DEV_MEMORY_UNREPAIRABLE` | 복구 불가 표시가 있으면 → **Failure** |
+
+### 그 밖의 참고 사항
+
+- **GPU에서는 판정하지 않는 항목:** enum에는 SM, PMU, MCU 항목도 있지만 GPU 판정 코드의 `switch`에서는 `default`로 무시됩니다(`DcgmHealthWatch.cpp:606`의 "ignore everything else for now").
+- **GPU가 아닌 장치:** NVSwitch(치명·비치명 오류), ConnectX, CPU(`MonitorCpuThermal`, `MonitorCpuPower`)는 각각 별도 판정 함수가 있습니다.
+- **`diag`와의 차이:** `health -c`는 즉시 끝나고 GPU를 점유하지 않아 운영 중에도 주기적으로 실행할 수 있습니다. 대신 이미 드라이버에 기록된 증상만 볼 수 있습니다. 숨어 있는 메모리 결함을 찾으려면 memtest 같은 `diag`가 필요합니다.
+
+이 장도 코드를 읽고 정리한 내용이며, 실제 GPU에서 실행해 확인하지는 않았습니다.
 
 ## 참고
 - GPU 1,000장 모니터링 하기: NVIDIA DCGM 활용 전략, https://tech.ktcloud.com/entry/GPU-1000장-모니터링-하기-NVIDIA-DCGM-활용-전략
