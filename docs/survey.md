@@ -27,13 +27,13 @@
 
 ### 실행: 기능별 상황
 
-| 구성 요소 | sm_61 지원 여부 | 근거 |
-|---|---|---|
+| 구성 요소                                               | sm_61 지원 여부                                          | 근거                                                                                    |
+| ------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `nv-hostengine`, `dcgmi`, 필드 모니터링, 헬스, 정책 | 지원. NVML로 동작하며 Pascal을 따로 처리하는 코드가 있음 | `dcgmlib/src/DcgmCacheManager.cpp:1716`, `modules/config/DcgmConfigManager.cpp:251` |
-| 진단(NVVS) 대상 GPU 판정 | 지원. Maxwell(5.x) 이상이면 모든 브랜드를 허용 | `nvvs/src/NvidiaValidationSuite.cpp:696-706` |
-| 진단의 L1 캐시 태그 테스트 | 미지원. Volta 전용이라 건너뜀 | `nvvs/plugin_src/memory/L1TagCuda.cpp:93-122` |
-| `dcgmproftester` | `dcgmproftester12` 사용 필요 | `dcgmproftester/DcgmProfTester.cpp:1213-1225` |
-| 프로파일링 지표(`DCGM_FI_PROF_*`) | 코드로 확인할 수 없음. 해당 모듈은 비공개 소스임 | NVIDIA 문서상 Volta 이상만 지원하는 것으로 알고 있음(미확인) |
+| 진단(NVVS) 대상 GPU 판정                                | 지원. Maxwell(5.x) 이상이면 모든 브랜드를 허용           | `nvvs/src/NvidiaValidationSuite.cpp:696-706`                                          |
+| 진단의 L1 캐시 태그 테스트                              | 미지원. Volta 전용이라 건너뜀                            | `nvvs/plugin_src/memory/L1TagCuda.cpp:93-122`                                         |
+| `dcgmproftester`                                      | `dcgmproftester12` 사용 필요                           | `dcgmproftester/DcgmProfTester.cpp:1213-1225`                                         |
+| 프로파일링 지표(`DCGM_FI_PROF_*`)                     | 코드로 확인할 수 없음. 해당 모듈은 비공개 소스임         | NVIDIA 문서상 Volta 이상만 지원하는 것으로 알고 있음(미확인)                            |
 
 ### 주의: CUDA 13과 Pascal
 
@@ -45,12 +45,12 @@ if ((arch == MAXWELL || arch == PASCAL || arch == VOLTA)
     return 12;   // cuda12 플러그인으로 대체
 ```
 
-| 드라이버가 보고하는 CUDA 버전 | 선택되는 플러그인 | sm_61에서 결과 |
-|---|---|---|
-| 11.x | `cuda11` | 정상 |
-| 12.x | `cuda12` | 정상 |
-| 13.0 | `cuda12`(대체) | 정상 |
-| 13.1 이상 | `cuda13` | 진단의 CUDA 테스트가 실패할 가능성이 큼 |
+| 드라이버가 보고하는 CUDA 버전 | 선택되는 플러그인 | sm_61에서 결과                          |
+| ----------------------------- | ----------------- | --------------------------------------- |
+| 11.x                          | `cuda11`        | 정상                                    |
+| 12.x                          | `cuda12`        | 정상                                    |
+| 13.0                          | `cuda12`(대체)  | 정상                                    |
+| 13.1 이상                     | `cuda13`        | 진단의 CUDA 테스트가 실패할 가능성이 큼 |
 
 - 대체 조건은 CUDA 버전이 정확히 **13.0**일 때만 적용됩니다.
 - `dcgmproftester`도 같은 방식입니다. CUDA 13.0에서는 `dcgmproftester12`를 쓰라는 안내가 나옵니다. 13.1 이상에서는 이런 안내가 없고, 버전이 맞지 않는다는 오류가 납니다.
@@ -89,21 +89,21 @@ dcgmi diag -r 3
 
 `dcgmi diag -r <단계>`의 단계 번호(1~4)는 diag 모듈이 nvvs에 넘기는 테스트 묶음 이름(short/medium/long/xlong)으로 바뀝니다(`modules/diag/DcgmDiagManager.cpp:374-387`, 값은 `dcgmlib/dcgm_structs.h:1965-1968`의 `DCGM_POLICY_VALID_SV_*`). 각 묶음에 들어가는 테스트는 `nvvs/src/NvidiaValidationSuite.cpp:1128-1190`에서 정합니다. 단계가 높을수록 아래 단계의 테스트를 모두 포함합니다.
 
-| 단계 | 묶음 이름 | 추가되는 테스트 |
-|---|---|---|
-| 1 | short(quick) | 소프트웨어 검사(denylist, NVML/CUDA 라이브러리, 권한, persistence mode, 페이지 리타이어먼트, Inforom, Fabric Manager 등) |
-| 2 | medium | memory, pcie |
-| 3 | long | diagnostic(gpuburn), nvbandwidth, nccl_tests, memory_bandwidth, targeted_stress, targeted_power (root이면 EUD도) |
-| 4 | xlong | memtest, pulse_test |
+| 단계 | 묶음 이름    | 추가되는 테스트                                                                                                          |
+| ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| 1    | short(quick) | 소프트웨어 검사(denylist, NVML/CUDA 라이브러리, 권한, persistence mode, 페이지 리타이어먼트, Inforom, Fabric Manager 등) |
+| 2    | medium       | memory, pcie                                                                                                             |
+| 3    | long         | diagnostic(gpuburn), nvbandwidth, nccl_tests, memory_bandwidth, targeted_stress, targeted_power (root이면 EUD도)         |
+| 4    | xlong        | memtest, pulse_test                                                                                                      |
 
 ### 소스 구성
 
-| 경로 | 내용 |
-|---|---|
-| `nvvs/src/` | nvvs 본체: 진입점 `NvvsMain.cpp`, 명령행 처리와 GPU 선택(`NvidiaValidationSuite.cpp`), 플러그인 로드(`PluginLib.cpp`) |
-| `nvvs/include/TestFramework.inl` | 플러그인 디렉터리(cuda11/12/13) 선택과 테스트 실행 흐름 |
-| `nvvs/plugin_src/` | 테스트 플러그인들. 각각 `libXxx.so`로 빌드되고 CUDA 버전별로 따로 만들어짐 |
-| `nvvs/nvvs.conf`, `nvvs/diag-skus.yaml.in` | 기본 설정과 GPU 모델별 파라미터 |
+| 경로                                           | 내용                                                                                                                       |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `nvvs/src/`                                  | nvvs 본체: 진입점`NvvsMain.cpp`, 명령행 처리와 GPU 선택(`NvidiaValidationSuite.cpp`), 플러그인 로드(`PluginLib.cpp`) |
+| `nvvs/include/TestFramework.inl`             | 플러그인 디렉터리(cuda11/12/13) 선택과 테스트 실행 흐름                                                                    |
+| `nvvs/plugin_src/`                           | 테스트 플러그인들. 각각`libXxx.so`로 빌드되고 CUDA 버전별로 따로 만들어짐                                                |
+| `nvvs/nvvs.conf`, `nvvs/diag-skus.yaml.in` | 기본 설정과 GPU 모델별 파라미터                                                                                            |
 
 ### 참고
 
@@ -226,12 +226,14 @@ sequenceDiagram
 ### 빌드 단계
 
 **① 커널 소스 → PTX → C 헤더 (저장소에 이미 들어 있음)**
+
 - GPU 커널은 `nvvs/plugin_src/memtest/tests.cu`에 있습니다. `move_inv_write`, `test0_*`부터 `test10_*`까지 모두 `extern "C" __global__`로 선언되어 있습니다.
 - 이 파일을 컴파일한 결과인 `tests.ptx`가 저장소에 들어 있습니다. PTX 헤더를 보면 CUDA 10.2 컴파일러로 `.target sm_30`, `.version 6.5`로 생성되었습니다.
 - PTX는 `bin2c`로 변환되어 `inc/tests.h`의 `unsigned char memtest_ptx_string[]` 배열이 됩니다([bin2c 설명](#bin2c란)).
 - 이 과정은 CMake 빌드에 포함되어 있지 않습니다. 커널을 바꾸면 PTX와 헤더를 직접 다시 만들어야 합니다. 옆에 있는 memory 플러그인은 이 작업용 스크립트(`nvvs/plugin_src/memory/build_ptx_string.sh`: nvcc `-ptx -arch=sm_30` 후 `bin2c`)가 있지만, memtest 폴더에는 이런 스크립트가 없습니다.
 
 **② 플러그인 공유 라이브러리 빌드**
+
 - `memtest/CMakeLists.txt`는 `declare_nvvs_plugin(memtest .)`으로 소스를 등록합니다. 그다음 `Cuda11/`, `Cuda12/`, `Cuda13/` 하위 디렉터리마다 `define_plugin(Memtest <ver>)`를 호출합니다.
 - `define_plugin` 매크로(`nvvs/plugin_src/CMakeLists.txt:44-75`)가 같은 소스를 CUDA 버전마다 한 번씩 빌드해 `Memtest_11`, `Memtest_12`, `Memtest_13` 타깃을 만듭니다.
   - 해당 버전의 CUDA 라이브러리와 `pluginCudaCommon_<ver>`, `pluginCommon`을 링크합니다.
@@ -263,10 +265,10 @@ bin2c l1tag.ptx --padd 0 --name l1tag_ptx_string > l1tag_ptx_string.h    # ② P
 python find_ptx_symbols.py l1tag.ptx l1tag_ptx_string.h                  # ③ 커널 이름 상수 추가
 ```
 
-| 옵션 | 의미 |
-|---|---|
-| `--name l1tag_ptx_string` | 생성할 배열의 이름 |
-| `--padd 0` | 배열 끝에 `0x00` 바이트를 붙임 |
+| 옵션                        | 의미                            |
+| --------------------------- | ------------------------------- |
+| `--name l1tag_ptx_string` | 생성할 배열의 이름              |
+| `--padd 0`                | 배열 끝에`0x00` 바이트를 붙임 |
 
 memtest의 `inc/tests.h`도 같은 방식으로 만들어진 것으로 보입니다. 파일 내용이 그와 맞습니다.
 
@@ -283,15 +285,13 @@ memtest의 `inc/tests.h`도 같은 방식으로 만들어진 것으로 보입니
 2. **nvvs 실행:** `nv-hostengine`의 diag 모듈(`modules/diag/DcgmDiagManager.cpp`)이 `nvvs` 바이너리를 자식 프로세스로 실행합니다.
 3. **플러그인 디렉터리 선택:** nvvs는 드라이버가 보고하는 CUDA 버전을 보고 `/cuda11/`, `/cuda12/`, `/cuda13/` 중 하나를 고릅니다(`GetPluginCudaDirExtension`, `nvvs/include/TestFramework.inl:325`). [1장](#주의-cuda-13과-pascal)의 Pascal/CUDA 13.0 대체 규칙이 여기서 적용됩니다.
 4. **dlopen:** nvvs는 선택한 디렉터리에서 `*.so.<숫자>` 파일을 모두 찾아 `dlopen`합니다(`LoadPluginWithDir`, `nvvs/src/PluginLib.cpp:180`). 그다음 `dlsym`으로 필수 진입점을 찾습니다.
-
-   | 진입점(`MemtestWrapper.cpp`) | 역할 |
-   |---|---|
-   | `GetPluginInterfaceVersion` | 플러그인 인터페이스 버전 확인 |
-   | `GetPluginInfo` | 테스트 이름 `memtest`와 파라미터 목록(`test_duration`, `test0`~`test10`, `num_chunks` 등) 등록 |
-   | `InitializePlugin` | `MemtestPlugin` 객체 생성, 로깅과 멈춤 감지(hang detection) 연결 |
-   | `RunTest` | `MemtestPlugin::Go()` 호출 |
-   | `RetrieveResults` / `RetrieveCustomStats` | 결과와 통계를 nvvs에 반환 |
-
+   | 진입점(`MemtestWrapper.cpp`)                | 역할                                                                                                    |
+   | --------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+   | `GetPluginInterfaceVersion`                 | 플러그인 인터페이스 버전 확인                                                                           |
+   | `GetPluginInfo`                             | 테스트 이름`memtest`와 파라미터 목록(`test_duration`, `test0`~`test10`, `num_chunks` 등) 등록 |
+   | `InitializePlugin`                          | `MemtestPlugin` 객체 생성, 로깅과 멈춤 감지(hang detection) 연결                                      |
+   | `RunTest`                                   | `MemtestPlugin::Go()` 호출                                                                            |
+   | `RetrieveResults` / `RetrieveCustomStats` | 결과와 통계를 nvvs에 반환                                                                               |
 5. **Go():** `memtest_wrapper.cpp:55`에서 파라미터를 적용합니다(기본 `test_duration` 600초). `is_allowed`가 false이면 테스트를 건너뜁니다. 그 외에는 `Memtest` 객체를 만들어 `Run()`을 호출합니다.
 
 ### GPU에 로드하기 (`Memtest.cpp`)
@@ -360,13 +360,11 @@ sequenceDiagram
 ```
 
 - `dcgmbuild/build.sh`는 `docker buildx bake`로 `dcgmbuild/docker-bake.hcl`의 세 타깃을 차례로 빌드합니다. 아키텍처(x86_64, aarch64)마다 따로 만듭니다.
-
-  | 이미지 | 기반 | 내용 | 근거 |
-  |---|---|---|---|
-  | `common-host-software` | `ubuntu:24.04` | git, git-lfs, cmake, clang, ripgrep, lcov, ccache, sccache | `dcgmbuild/container-images/common-host-software/scripts/` |
-  | `toolchain-ARCH` | common-host-software | crosstool-ng로 만든 GCC 크로스 컴파일러(`/opt/cross`), CMake 툴체인 파일, CUDA, Rust | `dcgmbuild/container-images/toolchain/Dockerfile` |
-  | `dcgmbuild-ARCH` | toolchain-ARCH | 크로스 빌드한 서드파티 라이브러리를 sysroot(`/opt/cross/TARGET/sysroot`)에 설치 | `dcgmbuild/container-images/dcgmbuild/scripts/` |
-
+  | 이미지                   | 기반                 | 내용                                                                                   | 근거                                                         |
+  | ------------------------ | -------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+  | `common-host-software` | `ubuntu:24.04`     | git, git-lfs, cmake, clang, ripgrep, lcov, ccache, sccache                             | `dcgmbuild/container-images/common-host-software/scripts/` |
+  | `toolchain-ARCH`       | common-host-software | crosstool-ng로 만든 GCC 크로스 컴파일러(`/opt/cross`), CMake 툴체인 파일, CUDA, Rust | `dcgmbuild/container-images/toolchain/Dockerfile`          |
+  | `dcgmbuild-ARCH`       | toolchain-ARCH       | 크로스 빌드한 서드파티 라이브러리를 sysroot(`/opt/cross/TARGET/sysroot`)에 설치      | `dcgmbuild/container-images/dcgmbuild/scripts/`            |
 - toolchain 이미지는 `ARCHITECTURE`, `TARGET`, `CMAKE_TOOLCHAIN_FILE`, `DCGM_BUILD_INSIDE_DOCKER=1` 환경 변수를 설정합니다. `build.sh`는 이 값으로 자신이 컨테이너 안에서 실행 중인지 판단합니다.
 - 결과 태그는 `dcgm/dcgmbuild-x86_64:latest`, `dcgm/dcgmbuild-aarch64:latest`입니다. `intodocker.sh`는 `DCGM_DOCKER_IMAGE`(기본 `dcgm/dcgmbuild`) 뒤에 `-아키텍처`를 붙여 이 이미지를 찾습니다.
 
@@ -478,12 +476,12 @@ sudo systemctl --now enable nvidia-dcgm
 
 **패키지 구성** (`cmake/packaging.cmake:131-140` 기준, 기본 이름은 `datacenter-gpu-manager-4`)
 
-| 패키지 | 내용 |
-|---|---|
-| `datacenter-gpu-manager-4-core` | `nv-hostengine`, `dcgmi`, 라이브러리, 모듈 |
+| 패키지                                                          | 내용                                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------ |
+| `datacenter-gpu-manager-4-core`                               | `nv-hostengine`, `dcgmi`, 라이브러리, 모듈         |
 | `datacenter-gpu-manager-4-cuda11` / `-cuda12` / `-cuda13` | 해당 CUDA 버전용 nvvs 플러그인(**memtest 포함**) |
-| `datacenter-gpu-manager-4-cuda-all` | 위 세 CUDA 패키지를 모두 설치 |
-| `datacenter-gpu-manager-4-dev` | 헤더 등 개발용 파일 |
+| `datacenter-gpu-manager-4-cuda-all`                           | 위 세 CUDA 패키지를 모두 설치                          |
+| `datacenter-gpu-manager-4-dev`                                | 헤더 등 개발용 파일                                    |
 
 - memtest는 `cudaXX` 패키지 안에 있습니다(`/usr/libexec/datacenter-gpu-manager-4/plugins/cudaXX/`). `core` 패키지만 설치하면 memtest를 실행할 수 없습니다.
 - **Pascal(sm_61) 같은 구형 GPU에서 드라이버가 CUDA 13.0을 보고하는 경우**, nvvs는 cuda12 플러그인을 사용합니다([1장](#주의-cuda-13과-pascal) 참고). 이때는 `-cuda13`이 아니라 `-cuda12`를 설치하거나, 간단히 `-cuda-all`을 설치하세요.
@@ -494,6 +492,44 @@ sudo systemctl --now enable nvidia-dcgm
 ```bash
 systemctl status nvidia-dcgm     # active (running) 인지 확인
 dcgmi discovery -l               # GPU 목록이 보이면 정상
+```
+
+### snap으로 설치 (대안)
+
+Canonical이 Snap Store에 `dcgm`이라는 이름으로 DCGM을 패키징해 배포하고 있어, 저장소 등록 없이 apt보다 간단하게 설치할 수 있습니다. **이 부분은 저장소 코드가 아니라 Snap Store(snapcraft.io/dcgm) 메타데이터를 2026-10-01 기준으로 직접 조회해 확인한 내용**입니다(퍼블리셔: Canonical, `verified`; confinement: `strict`). apt 패키지처럼 memtest 플러그인이 그대로 들어있는지까지는 저장소 코드로 대조하지 못했으므로, 설치 후 `dcgmi diag -r memtest`가 실제로 동작하는지 꼭 확인하세요.
+
+```bash
+# ① 사용 가능한 트랙(채널) 확인 (선택 사항)
+snap info dcgm
+
+# ② 드라이버의 CUDA 메이저 버전에 맞춰 설치 (트랙을 지정해야 함)
+CUDA_MAJOR=$(nvidia-smi | sed -E -n 's/.*CUDA Version: ([0-9]+)[.].*/\1/p')
+sudo snap install dcgm --channel=v4-cuda${CUDA_MAJOR}/stable
+```
+
+**주의: 채널을 지정하지 않으면 안 됩니다.** `sudo snap install dcgm`처럼 `--channel` 없이 설치하면 기본 트랙인 `latest`(`v3`와 동일)가 설치되어, 4.x가 아닌 **DCGM 3.3.8 구버전**이 깔립니다.
+
+**조회된 트랙 목록** (snap API `channel-map` 기준, 2026-10-01 조회)
+
+| 트랙                | DCGM 버전 | 비고                                |
+| ------------------- | --------- | ----------------------------------- |
+| `latest` (= `v3`) | 3.3.8     | 구버전. 채널 미지정 시 기본으로 설치 |
+| `v4-cuda11`        | 4.4.1     | CUDA 11 드라이버용                  |
+| `v4-cuda12`        | 4.4.1     | CUDA 12 드라이버용                  |
+| `v4-cuda13`        | 4.4.1     | CUDA 13 드라이버용                  |
+
+- apt와 마찬가지로 **Pascal(sm_61) 등 구형 GPU에서 드라이버가 CUDA 13.0을 보고하는 경우**([1장](#주의-cuda-13과-pascal) 참고)에는 `v4-cuda13` 대신 `v4-cuda12` 채널을 설치하세요.
+- snap은 strict confinement이므로 설치되는 명령은 `dcgmi`가 아니라 `dcgm.dcgmi`처럼 **스냅 이름이 붙은 형태**로 노출됩니다(별도 alias를 만들지 않은 경우). 아래 [memtest 실행](#memtest-실행) 절의 `dcgmi ...` 예시는 snap 환경에서 `sudo dcgm.dcgmi ...`로 바꿔 실행하거나, 다음과 같이 별칭을 만들어 그대로 사용하세요.
+  ```bash
+  sudo snap alias dcgm.dcgmi dcgmi
+  ```
+
+**서비스 관리** (apt의 `systemctl` 대신 `snap` 명령 사용)
+
+```bash
+sudo snap services dcgm          # 서비스 상태 확인 (nv-hostengine, dcgm-exporter)
+sudo snap start dcgm.nv-hostengine   # 설치 시 보통 자동으로 시작됨
+sudo snap logs dcgm.nv-hostengine    # 로그 확인
 ```
 
 ### memtest 실행
@@ -519,23 +555,23 @@ sudo dcgmi diag -r 4
 
 **주요 옵션** (`dcgmi/CommandLineParser.cpp`)
 
-| 옵션 | 의미 |
-|---|---|
-| `-r memtest` | 실행할 테스트 이름 또는 단계 번호(1~4) |
-| `-p "테스트.파라미터=값;..."` | 테스트 파라미터. 여러 개는 `;`로 구분 |
-| `-i 0,1` | 진단할 엔티티(GPU) 목록 (`--entity-id`) |
-| `-j` | JSON 출력 |
-| `--iterations N` | N번 연속 실행 |
+| 옵션                            | 의미                                      |
+| ------------------------------- | ----------------------------------------- |
+| `-r memtest`                  | 실행할 테스트 이름 또는 단계 번호(1~4)    |
+| `-p "테스트.파라미터=값;..."` | 테스트 파라미터. 여러 개는`;`로 구분    |
+| `-i 0,1`                      | 진단할 엔티티(GPU) 목록 (`--entity-id`) |
+| `-j`                          | JSON 출력                                 |
+| `--iterations N`              | N번 연속 실행                             |
 
 **memtest 파라미터와 기본값** (`nvvs/plugin_src/memtest/memtest_wrapper.cpp:33-50`, `nvvs/plugin_src/include/PluginCommon.h:25`)
 
-| 파라미터 | 기본값 | 의미 |
-|---|---|---|
-| `test_duration` | 600 | 실행 시간(초) |
-| `test0`~`test10` | test7, test10만 `True` | 개별 테스트 켜기/끄기. 예: `memtest.test2=true` |
-| `num_chunks` | 1 | 메모리를 몇 조각으로 나눠 할당할지 |
-| `use_mapped_mem` | False | GPU 메모리 대신 호스트 매핑 메모리 사용 |
-| `minimum_allocation_percentage` | 75 | 빈 메모리가 전체의 이 비율(%)보다 적으면 테스트를 **건너뜀** |
+| 파라미터                          | 기본값                  | 의미                                                              |
+| --------------------------------- | ----------------------- | ----------------------------------------------------------------- |
+| `test_duration`                 | 600                     | 실행 시간(초)                                                     |
+| `test0`~`test10`              | test7, test10만`True` | 개별 테스트 켜기/끄기. 예:`memtest.test2=true`                  |
+| `num_chunks`                    | 1                       | 메모리를 몇 조각으로 나눠 할당할지                                |
+| `use_mapped_mem`                | False                   | GPU 메모리 대신 호스트 매핑 메모리 사용                           |
+| `minimum_allocation_percentage` | 75                      | 빈 메모리가 전체의 이 비율(%)보다 적으면 테스트를**건너뜀** |
 
 예를 들어 모든 테스트를 켜고 5분 동안 실행하려면 이렇게 합니다.
 
@@ -590,12 +626,12 @@ grep -A20 "errors found in block" /tmp/memtest.log
 
 ### 주의할 점
 
-| 제한 | 이유 |
-|---|---|
-| **가상 주소임** | `err_addr`는 `cudaMalloc`으로 받은 포인터 값, 즉 GPU 가상 주소입니다. 물리 DRAM 주소, 뱅크, 행(row) 위치가 아닙니다. 실행할 때마다 값이 달라질 수 있습니다. |
-| **최대 10개만 남음** | 기록 버퍼가 10칸이고 `% 10`으로 덮어씁니다. 오류가 많으면 앞의 기록은 사라지고, 로그 문구대로 "마지막 10개"만 남습니다. |
-| **"블록 번호"의 의미가 테스트마다 다름** | 대부분 1MB 블록 인덱스(청크 번호 × 청크당 블록 수 + i)입니다. 하지만 test0 전역 주소 검사처럼 청크 번호를 넘기는 곳도 있습니다(`Memtest.cpp:1065`). |
-| **주소를 볼 수 있는 곳이 로그뿐** | JSON 출력(`-j`)이나 `dcgmi` 결과 화면에는 주소가 없습니다. |
+| 제한                                           | 이유                                                                                                                                                            |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **가상 주소임**                          | `err_addr`는 `cudaMalloc`으로 받은 포인터 값, 즉 GPU 가상 주소입니다. 물리 DRAM 주소, 뱅크, 행(row) 위치가 아닙니다. 실행할 때마다 값이 달라질 수 있습니다. |
+| **최대 10개만 남음**                     | 기록 버퍼가 10칸이고`% 10`으로 덮어씁니다. 오류가 많으면 앞의 기록은 사라지고, 로그 문구대로 "마지막 10개"만 남습니다.                                        |
+| **"블록 번호"의 의미가 테스트마다 다름** | 대부분 1MB 블록 인덱스(청크 번호 × 청크당 블록 수 + i)입니다. 하지만 test0 전역 주소 검사처럼 청크 번호를 넘기는 곳도 있습니다(`Memtest.cpp:1065`).          |
+| **주소를 볼 수 있는 곳이 로그뿐**        | JSON 출력(`-j`)이나 `dcgmi` 결과 화면에는 주소가 없습니다.                                                                                                  |
 
 참고로 `error_checking()`은 오류 배열을 초기화할 때 `err_second_read`는 지우지 않습니다(`Memtest.cpp:978-985`). 다음 기록 때 덮어써지므로 결과에는 사실상 영향이 없습니다.
 
@@ -635,27 +671,27 @@ dcgmi health --clear   # 감시 끄기
 
 판정 로직은 `modules/health/DcgmHealthWatch.cpp`의 `MonitorWatchesForGpu()`(538행)에서 항목별 `Monitor*()` 함수로 나뉩니다.
 
-| 감시 항목 | 보는 데이터 | 판정 기준 |
-|---|---|---|
-| **항상 검사** (감시 항목과 무관) | 치명적 XID | XID 48(DBE), 74(NVLink 치명), 79(버스 이탈), 95, 119·120(GSP), 140(ECC 복구 불가) → **Failure**. XID 94(격리된 오류) → **Warning** |
-| **PCIe** (`p`) | `DCGM_FI_DEV_PCIE_REPLAY_TOTAL` | 1분 동안의 replay 증가량이 PCIe 세대·레인 수로 정한 기대치를 넘으면 **Warning**. XID 38, 39, 42도 Warning |
-| **메모리** (`m`) | ECC, 페이지 퇴역, 행 재매핑 필드 | 아래 표 참고. XID 31, 32, 43, 63은 Warning, XID 64는 Failure |
-| **InfoROM** (`i`) | `DCGM_FI_DEV_INFOROM_VALID` | InfoROM이 손상되었으면 **Warning** |
-| **온도** (`t`) | `DCGM_FI_DEV_THERMAL_VIOLATION` | 기간 중 온도 때문에 클럭이 제한된 시간이 있으면 **Warning**. XID 60, 61, 62도 Warning |
-| **전력** (`t`) | `DCGM_FI_DEV_POWER_VIOLATION`, `DCGM_FI_DEV_BOARD_POWER_WATTS` | 전력 때문에 클럭이 제한되었거나 전력을 읽을 수 없으면 **Warning**. XID 54, 56, 57, 58, 78도 Warning |
-| **NVLink** (`n`) | 링크 상태, CRC·replay·recovery 오류 카운터, Fabric Manager 상태 | 링크 다운 → **Failure**. 오류 카운터 증가 → Warning 또는 Failure. XID 67, 73, 121은 Warning |
-| **드라이버** (`d`) | `DCGM_FI_DEV_GPU_RECOVERY_ACTION` | 드라이버가 리셋, 재부팅, 작업 정리(drain)를 권고하면 **Warning/Failure** |
+| 감시 항목                              | 보는 데이터                                                        | 판정 기준                                                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **항상 검사** (감시 항목과 무관) | 치명적 XID                                                         | XID 48(DBE), 74(NVLink 치명), 79(버스 이탈), 95, 119·120(GSP), 140(ECC 복구 불가) →**Failure**. XID 94(격리된 오류) → **Warning** |
+| **PCIe** (`p`)                 | `DCGM_FI_DEV_PCIE_REPLAY_TOTAL`                                  | 1분 동안의 replay 증가량이 PCIe 세대·레인 수로 정한 기대치를 넘으면**Warning**. XID 38, 39, 42도 Warning                                  |
+| **메모리** (`m`)               | ECC, 페이지 퇴역, 행 재매핑 필드                                   | 아래 표 참고. XID 31, 32, 43, 63은 Warning, XID 64는 Failure                                                                                     |
+| **InfoROM** (`i`)              | `DCGM_FI_DEV_INFOROM_VALID`                                      | InfoROM이 손상되었으면**Warning**                                                                                                          |
+| **온도** (`t`)                 | `DCGM_FI_DEV_THERMAL_VIOLATION`                                  | 기간 중 온도 때문에 클럭이 제한된 시간이 있으면**Warning**. XID 60, 61, 62도 Warning                                                       |
+| **전력** (`t`)                 | `DCGM_FI_DEV_POWER_VIOLATION`, `DCGM_FI_DEV_BOARD_POWER_WATTS` | 전력 때문에 클럭이 제한되었거나 전력을 읽을 수 없으면**Warning**. XID 54, 56, 57, 58, 78도 Warning                                         |
+| **NVLink** (`n`)               | 링크 상태, CRC·replay·recovery 오류 카운터, Fabric Manager 상태  | 링크 다운 →**Failure**. 오류 카운터 증가 → Warning 또는 Failure. XID 67, 73, 121은 Warning                                               |
+| **드라이버** (`d`)             | `DCGM_FI_DEV_GPU_RECOVERY_ACTION`                                | 드라이버가 리셋, 재부팅, 작업 정리(drain)를 권고하면**Warning/Failure**                                                                    |
 
 **메모리 세부 검사** (`MonitorMem()`, 2193행에서 차례로 호출)
 
-| 검사 | 필드 | 판정 |
-|---|---|---|
-| 휘발성 DBE | `DCGM_FI_DEV_ECC_DBE_VOL_TOTAL` | 기간 중 Double Bit ECC 오류 발생 → **Failure** |
-| 퇴역 대기 페이지 | `DCGM_FI_DEV_PAGE_RETIRED_PENDING` | 퇴역 대기 중인 페이지가 있으면 → **Warning** (재부팅이나 리셋 필요) |
-| 퇴역 페이지 수 | `DCGM_FI_DEV_PAGE_RETIRED_SBE/DBE_TOTAL` | SBE와 DBE 합계가 63 이상이면 → **Failure**. DBE가 15개를 넘은 뒤 1주일 동안 계속 늘어나면 → **Failure** (`common/DcgmGPUHardwareLimits.h:21-22`) |
-| 행 재매핑 실패 | `DCGM_FI_DEV_ROW_REMAP_FAILED` | 실패가 있으면 → **Failure** |
-| 수정 불가 행 재매핑 | `DCGM_FI_DEV_ROW_REMAP_UNCORRECTABLE_TOTAL` | 512 이상이면 → **Warning** (`DcgmGPUHardwareLimits.h:39`) |
-| 복구 불가 메모리 | `DCGM_FI_DEV_MEMORY_UNREPAIRABLE` | 복구 불가 표시가 있으면 → **Failure** |
+| 검사                | 필드                                          | 판정                                                                                                                                                            |
+| ------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 휘발성 DBE          | `DCGM_FI_DEV_ECC_DBE_VOL_TOTAL`             | 기간 중 Double Bit ECC 오류 발생 →**Failure**                                                                                                            |
+| 퇴역 대기 페이지    | `DCGM_FI_DEV_PAGE_RETIRED_PENDING`          | 퇴역 대기 중인 페이지가 있으면 →**Warning** (재부팅이나 리셋 필요)                                                                                       |
+| 퇴역 페이지 수      | `DCGM_FI_DEV_PAGE_RETIRED_SBE/DBE_TOTAL`    | SBE와 DBE 합계가 63 이상이면 →**Failure**. DBE가 15개를 넘은 뒤 1주일 동안 계속 늘어나면 → **Failure** (`common/DcgmGPUHardwareLimits.h:21-22`) |
+| 행 재매핑 실패      | `DCGM_FI_DEV_ROW_REMAP_FAILED`              | 실패가 있으면 →**Failure**                                                                                                                               |
+| 수정 불가 행 재매핑 | `DCGM_FI_DEV_ROW_REMAP_UNCORRECTABLE_TOTAL` | 512 이상이면 →**Warning** (`DcgmGPUHardwareLimits.h:39`)                                                                                               |
+| 복구 불가 메모리    | `DCGM_FI_DEV_MEMORY_UNREPAIRABLE`           | 복구 불가 표시가 있으면 →**Failure**                                                                                                                     |
 
 ### 그 밖의 참고 사항
 
@@ -666,5 +702,6 @@ dcgmi health --clear   # 감시 끄기
 이 장도 코드를 읽고 정리한 내용이며, 실제 GPU에서 실행해 확인하지는 않았습니다.
 
 ## 참고
+
 - GPU 1,000장 모니터링 하기: NVIDIA DCGM 활용 전략, https://tech.ktcloud.com/entry/GPU-1000장-모니터링-하기-NVIDIA-DCGM-활용-전략
 - [GPU / dcgmi] dcgmi 명령어로 GPU 진단 수행, https://youngswooyoung.tistory.com/m/351
